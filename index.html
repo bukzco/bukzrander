@@ -2154,7 +2154,7 @@ document.addEventListener('click', e => { if (!e.target.closest('#vmenu') && !e.
 
 /* ---------- menús ---------- */
 const MENUS = [
-  ['Archivo', [['Nuevo proyecto…', () => openProjects(true)], ['Abrir proyecto…', () => openProjects()], ['Guardar ahora', saveNow, '⌘S'], '-', ['Importar plano (PNG, JPG, PDF)…', () => openImport()], ['Importar archivo de proyecto…', () => $('#fileJson').click()], '-', ['Exportar plano PNG', () => exportPNG()], ['Exportar imagen de la perspectiva', export3D], ['Exportar lista de mobiliario (CSV)', exportCSV], ['Exportar proyecto (JSON)', exportJSON], '-', ['Cerrar sesión', () => signOutFirebase()]]],
+  ['Archivo', [['Nuevo proyecto…', () => openProjects(true)], ['Abrir proyecto…', () => openProjects()], ['Guardar ahora', saveNow, '⌘S'], '-', ['Importar plano (PNG, JPG, PDF)…', () => openImport()], ['Importar proyecto o respaldo…', () => $('#fileJson').click()], '-', ['Exportar plano PNG', () => exportPNG()], ['Exportar imagen de la perspectiva', export3D], ['Exportar lista de mobiliario (CSV)', exportCSV], ['Exportar proyecto (JSON)', exportJSON], '-', ['Cerrar sesión', () => signOutFirebase()]]],
   ['Edición', [['Deshacer', undo, '⌘Z'], ['Rehacer', redo, '⇧⌘Z'], '-', ['Duplicar', duplicateSel, '⌘D'], ['Eliminar', removeSel, 'Supr'], '-', ['Seleccionar todo', selectAll, '⌘A'], ['Deseleccionar', () => setSel([]), 'Esc']]],
   ['Vista', [['Superior', () => showView('superior')], ['Perspectiva', () => showView('perspectiva')], ['Frontal', () => showView('frontal')], ['Derecha', () => showView('derecha')], '-', ['Una vista', () => setLayout(1)], ['Cuatro vistas', () => setLayout(4)], ['Encuadrar', fitAll], '-', ['Sombreado', () => setDisplay('sombreado')], ['Categorías', () => setDisplay('categorias')], ['Técnico', () => setDisplay('tecnico')], ['Render realista', () => setDisplay('render')], '-', ['Cambiar tema claro u oscuro', toggleTheme]]],
   ['Arquitectura', [['Importar plano y crear muros…', () => openImport()], ['Dibujar muros', () => setTool('wall')], '-', ['Muros del borde automáticos', () => { checkpoint(); P.room.walls = !autoWalls(); changed(); log(`Muros del borde ${autoWalls() ? 'activados' : 'desactivados'}.`); }]]],
@@ -2531,10 +2531,33 @@ function exportCSV() {
   download(`${slug(P.name)}-mobiliario.csv`, '\ufeff' + rows.map(r => r.map(q).join(';')).join('\r\n'));
 }
 function exportJSON() { const textures = {}; usedTextures().forEach(id => { textures[id] = { name: TEXLIB[id].name, src: TEXLIB[id].src }; }); download(`${slug(P.name)}.json`, JSON.stringify({ app: 'bukz-planta', version: 3, ...projDoc(), textures, underlaySrc: underlayImg.src && P.underlay ? underlayImg.src : null }, null, 1)); }
+async function importBackup(o) {
+  if (o.textures) for (const [id, v] of Object.entries(o.textures)) if (!TEXLIB[id] && v && v.src) await saveTexture({ id, name: v.name || 'Textura', src: v.src });
+  let n = 0, skip = 0;
+  for (const pr of o.proyectos) {
+    if (!pr || !pr.room || !Array.isArray(pr.items)) continue;
+    let id = pr.id || uid(); const exists = store.list.some(q => q.id === id);
+    if (exists) { skip++; continue; }
+    const { underlaySrc, id: _i, ...doc } = pr;
+    doc.items = doc.items.filter(i => DEF[i.type]);
+    const data = JSON.parse(JSON.stringify(doc));
+    try {
+      if (store.mode === 'db') { await store.db.collection('tiendas').doc(id).set(data); if (underlaySrc) await store.db.collection('planos').doc(id).set({ src: underlaySrc }); }
+      else { const all = lsRead(); all[id] = data; lsWrite(all); if (underlaySrc) try { localStorage.setItem('bukz-planta:plano:' + id, underlaySrc); } catch {} }
+      n++;
+    } catch {}
+  }
+  if (store.mode === 'local') refreshListLocal();
+  renderProjects();
+  const msg = `${n} proyecto${n === 1 ? '' : 's'} recuperado${n === 1 ? '' : 's'}${skip ? ` (${skip} ya existía${skip === 1 ? '' : 'n'})` : ''}. Ábrelos desde Proyectos.`;
+  log(msg); toast(msg);
+}
 $('#fileJson').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
-    const o = JSON.parse(await f.text()); if (!o.room || !Array.isArray(o.items)) throw 0;
+    const o = JSON.parse(await f.text());
+    if (Array.isArray(o.proyectos)) { await importBackup(o); return; }
+    if (!o.room || !Array.isArray(o.items)) throw 0;
     if (o.textures) for (const [id, v] of Object.entries(o.textures)) if (!TEXLIB[id] && v && v.src) await saveTexture({ id, name: v.name || 'Textura', src: v.src });
     o.items = o.items.filter(i => DEF[i.type]).map(i => ({ ...mkItem(i.type, 0, 0), ...i, id: uid() }));
     await saving; openProject(o, uid());
