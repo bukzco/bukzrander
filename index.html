@@ -411,6 +411,17 @@ dialog::backdrop{ background:rgba(0,0,0,.45); }
   </div>
 </dialog>
 
+<dialog id="loginDlg" style="width:min(420px, calc(100vw - 24px))">
+  <div style="padding:26px 24px 22px;text-align:center">
+    <div class="logo" style="display:inline-flex;margin-bottom:16px"></div>
+    <h2 style="margin:0 0 6px;font-size:17px">Entra para ver los proyectos del equipo</h2>
+    <p class="note" style="margin:0 0 18px" id="loginNote">Los proyectos se guardan en la nube y se ven igual en cualquier navegador.</p>
+    <button class="btn pri" id="loginGo" style="width:100%;padding:9px">Entrar con Google</button>
+    <p class="note" id="loginErr" style="color:var(--danger);min-height:1em"></p>
+    <button class="linkb" id="loginLocal">Seguir sin conexión (solo en este navegador)</button>
+  </div>
+</dialog>
+
 <dialog id="helpDlg">
   <div class="dh"><h2>Comandos y atajos</h2><button class="btn" onclick="this.closest('dialog').close()">Cerrar</button></div>
   <div class="help" id="helpBody"></div>
@@ -434,6 +445,26 @@ dialog::backdrop{ background:rgba(0,0,0,.45); }
 <input type="file" id="fileJson" accept=".json,application/json" class="sr" tabindex="-1">
 <div class="toast" id="toast" role="status"></div>
 
+<script>
+/* ============================================================
+   BASE DE DATOS COMPARTIDA (solo para la versión en GitHub)
+   1. Crea el proyecto en Firebase (ver guía).
+   2. Reemplaza null por el objeto firebaseConfig que te da Firebase.
+   3. En BUKZ_DOMINIO pon el dominio de los correos que pueden entrar
+      (por ejemplo 'bukz.co'), o déjalo en '' para permitir cualquier
+      cuenta de Google que esté en BUKZ_CORREOS.
+   ============================================================ */
+window.BUKZ_FIREBASE = {
+  apiKey: "AIzaSyBY6nDFIuNhACd-lmrdwKOYnibtnRfxARE",
+  authDomain: "bukz-visual.firebaseapp.com",
+  projectId: "bukz-visual",
+  storageBucket: "bukz-visual.firebasestorage.app",
+  messagingSenderId: "60258198132",
+  appId: "1:60258198132:web:44b03c36e85ae26059a721"
+};
+window.BUKZ_DOMINIO = 'bukz.co';
+window.BUKZ_CORREOS = [];
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
@@ -2123,7 +2154,7 @@ document.addEventListener('click', e => { if (!e.target.closest('#vmenu') && !e.
 
 /* ---------- menús ---------- */
 const MENUS = [
-  ['Archivo', [['Nuevo proyecto…', () => openProjects(true)], ['Abrir proyecto…', () => openProjects()], ['Guardar ahora', saveNow, '⌘S'], '-', ['Importar plano (PNG, JPG, PDF)…', () => openImport()], ['Importar archivo de proyecto…', () => $('#fileJson').click()], '-', ['Exportar plano PNG', () => exportPNG()], ['Exportar imagen de la perspectiva', export3D], ['Exportar lista de mobiliario (CSV)', exportCSV], ['Exportar proyecto (JSON)', exportJSON]]],
+  ['Archivo', [['Nuevo proyecto…', () => openProjects(true)], ['Abrir proyecto…', () => openProjects()], ['Guardar ahora', saveNow, '⌘S'], '-', ['Importar plano (PNG, JPG, PDF)…', () => openImport()], ['Importar archivo de proyecto…', () => $('#fileJson').click()], '-', ['Exportar plano PNG', () => exportPNG()], ['Exportar imagen de la perspectiva', export3D], ['Exportar lista de mobiliario (CSV)', exportCSV], ['Exportar proyecto (JSON)', exportJSON], '-', ['Cerrar sesión', () => signOutFirebase()]]],
   ['Edición', [['Deshacer', undo, '⌘Z'], ['Rehacer', redo, '⇧⌘Z'], '-', ['Duplicar', duplicateSel, '⌘D'], ['Eliminar', removeSel, 'Supr'], '-', ['Seleccionar todo', selectAll, '⌘A'], ['Deseleccionar', () => setSel([]), 'Esc']]],
   ['Vista', [['Superior', () => showView('superior')], ['Perspectiva', () => showView('perspectiva')], ['Frontal', () => showView('frontal')], ['Derecha', () => showView('derecha')], '-', ['Una vista', () => setLayout(1)], ['Cuatro vistas', () => setLayout(4)], ['Encuadrar', fitAll], '-', ['Sombreado', () => setDisplay('sombreado')], ['Categorías', () => setDisplay('categorias')], ['Técnico', () => setDisplay('tecnico')], ['Render realista', () => setDisplay('render')], '-', ['Cambiar tema claro u oscuro', toggleTheme]]],
   ['Arquitectura', [['Importar plano y crear muros…', () => openImport()], ['Dibujar muros', () => setTool('wall')], '-', ['Muros del borde automáticos', () => { checkpoint(); P.room.walls = !autoWalls(); changed(); log(`Muros del borde ${autoWalls() ? 'activados' : 'desactivados'}.`); }]]],
@@ -2307,7 +2338,7 @@ async function doSave() {
       if (underlayDirty) { underlayDirty = false; const ref = store.db.collection('planos').doc(P.id); if (underlayImg.src && P.underlay) await ref.set({ src: underlayImg.src }); else await ref.delete(); }
       setStatus('ok', 'Guardado · equipo Bukz');
     } catch (e) {
-      if (e && e.code === 'invalid_argument') setStatus('', 'Solo visualización');
+      if (e && (e.code === 'invalid_argument' || e.code === 'permission-denied')) setStatus('', 'Sin permiso para guardar');
       else if (e && e.code === 'quota_exceeded') { setStatus('', 'Sin espacio'); toast('No hay espacio: elimina proyectos viejos.'); }
       else setStatus('', 'Error al guardar');
     }
@@ -2337,9 +2368,61 @@ function openProject(data, id) {
   loadUnderlayFor(id);
 }
 function refreshListLocal() { const all = lsRead(); store.list = Object.entries(all).map(([id, d]) => ({ id, ...d })).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)); }
+/* ---------- Firebase (versión GitHub) ---------- */
+const FB_SDK = 'https://www.gstatic.com/firebasejs/9.23.0/';
+function emailAllowed(email) {
+  email = (email || '').toLowerCase();
+  const dom = (window.BUKZ_DOMINIO || '').toLowerCase().replace(/^@/, ''), list = (window.BUKZ_CORREOS || []).map(e => String(e).toLowerCase());
+  if (list.includes(email)) return true;
+  return dom ? email.endsWith('@' + dom) : list.length === 0;
+}
+async function connectFirebase() {
+  try {
+    for (const f of ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js']) await loadScript(FB_SDK + f);
+  } catch { toast('No se pudo conectar con la base de datos. Se guardará solo en este navegador.'); return null; }
+  const fb = window.firebase; if (!fb.apps.length) fb.initializeApp(window.BUKZ_FIREBASE);
+  const auth = fb.auth();
+  let user = await new Promise(res => { const off = auth.onAuthStateChanged(u => { off(); res(u); }); });
+  if (user && !emailAllowed(user.email)) { await auth.signOut(); user = null; }
+  if (!user) user = await new Promise(res => {
+    const d = $('#loginDlg'); d.querySelector('.logo').innerHTML = document.querySelector('.title .logo').innerHTML;
+    $('#loginErr').textContent = ''; d.showModal();
+    d.addEventListener('cancel', e => e.preventDefault());
+    $('#loginGo').onclick = async () => {
+      $('#loginErr').textContent = '';
+      try {
+        const r = await auth.signInWithPopup(new fb.auth.GoogleAuthProvider());
+        if (!emailAllowed(r.user.email)) { await auth.signOut(); $('#loginErr').textContent = `La cuenta ${r.user.email} no tiene acceso. Usa tu correo de Bukz.`; return; }
+        d.close(); res(r.user);
+      } catch (e) { $('#loginErr').textContent = e && e.code === 'auth/popup-blocked' ? 'El navegador bloqueó la ventana. Permite ventanas emergentes y vuelve a intentar.' : e && e.code === 'auth/unauthorized-domain' ? 'Falta autorizar este dominio en Firebase › Authentication › Settings.' : 'No se pudo iniciar sesión. Vuelve a intentar.'; }
+    };
+    $('#loginLocal').onclick = () => { d.close(); res(null); };
+  });
+  if (!user) return null;
+  store.fb = { auth, user };
+  log(`Conectado como ${user.email}. Los proyectos se guardan en la nube.`);
+  return fb.firestore();
+}
+function signOutFirebase() { if (store.fb) store.fb.auth.signOut().then(() => location.reload()); else toast('No hay una sesión abierta.'); }
+async function uploadLocalProjects(btn) {
+  const all = lsRead(), ids = Object.keys(all).filter(id => !store.list.some(p => p.id === id));
+  btn.disabled = true; btn.textContent = 'Subiendo…';
+  let n = 0;
+  for (const id of ids) {
+    try {
+      await store.db.collection('tiendas').doc(id).set(JSON.parse(JSON.stringify(all[id])));
+      const pl = localStorage.getItem('bukz-planta:plano:' + id); if (pl) await store.db.collection('planos').doc(id).set({ src: pl });
+      n++;
+    } catch {}
+  }
+  const tex = texLocalAll();
+  for (const [id, v] of Object.entries(tex)) { try { await store.db.collection('texturas').doc(id).set({ name: v.name, src: v.src, createdAt: Date.now() }); } catch {} }
+  log(`${n} proyecto${n === 1 ? '' : 's'} subido${n === 1 ? '' : 's'} a la nube.`); renderProjects();
+}
 async function initStore() {
   let db = null;
   try { if (window.claude && typeof window.claude.use === 'function') db = await window.claude.use('db'); } catch {}
+  if (!db && window.BUKZ_FIREBASE) db = await connectFirebase();
   if (db) {
     store.db = db; store.mode = 'db'; let first = true;
     db.collection('tiendas').onSnapshot(snap => {
@@ -2358,7 +2441,8 @@ async function initStore() {
 function openProjects(focusNew) { renderProjects(); $('#dlg').showModal(); if (focusNew) setTimeout(() => $('#nName').focus(), 30); }
 function renderProjects() {
   if (store.mode === 'local') refreshListLocal();
-  $('#storeNote').textContent = store.mode === 'db' ? 'Proyectos compartidos con el equipo de Bukz que usa esta herramienta.' : 'Proyectos guardados en este navegador.';
+  $('#storeNote').innerHTML = store.mode === 'db' ? `Proyectos compartidos con el equipo de Bukz${store.fb ? ` · conectado como ${esc(store.fb.user.email)}` : ''}.` : 'Proyectos guardados solo en este navegador.';
+  if (store.fb) { const pend = Object.keys(lsRead()).filter(id => !store.list.some(p => p.id === id)).length; if (pend) { const b = document.createElement('button'); b.className = 'btn'; b.style.marginTop = '8px'; b.textContent = `Subir ${pend} proyecto${pend === 1 ? '' : 's'} guardado${pend === 1 ? '' : 's'} en este navegador`; b.onclick = () => uploadLocalProjects(b); $('#storeNote').appendChild(document.createElement('br')); $('#storeNote').appendChild(b); } }
   const list = store.list;
   const cur = list.some(p => p.id === P.id) ? '' : `<div class="pc cur"><div><b>${esc(P.name)}</b><small>Abierto ahora, aún sin guardar</small></div></div>`;
   $('#plist').innerHTML = cur + (list.length ? list.map(p => {
